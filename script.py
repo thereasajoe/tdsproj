@@ -1,19 +1,21 @@
 import os
 import glob
 
-# Define paths
-log_dir = "/data_output/logs/"
-output_file = "logs-recent.txt"  # Save in current directory
+# Define correct log directory and output file path
+log_dir = "/workspaces/tdsproj/data_output/logs/"
+output_file = "/workspaces/tdsproj/data_output/logs-recent.txt"
 
-# Get a list of .log files sorted by modification time (most recent first)
-log_files = sorted(glob.glob(os.path.join(log_dir, "*.log")), key=os.path.getmtime, reverse=True)
+# Check if the log directory exists
+if not os.path.exists(log_dir):
+    print(f"Log directory {log_dir} not found.")
+    exit(1)
 
-# Take the 10 most recent log files
-recent_logs = log_files[:10]
+# Get the most recent 10 log files sorted by modification time
+log_files = sorted(glob.glob(os.path.join(log_dir, "*.log")), key=os.path.getmtime, reverse=True)[:10]
 
-# Read first lines and write to the output file
+# Write first lines of these logs to the output file
 with open(output_file, "w") as out_f:
-    for log_file in recent_logs:
+    for log_file in log_files:
         with open(log_file, "r") as f:
             first_line = f.readline().strip()
             out_f.write(first_line + "\n")
