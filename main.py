@@ -27,3 +27,7 @@ async def read_file(path: str):
     with open(full_path, "r") as f:
         content = f.read()
     return {"content": content}
+
+@app.get("/")
+def read_root():
+    return {"message": "Hello, FastAPI is running!"}
