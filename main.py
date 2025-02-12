@@ -4,7 +4,7 @@ import subprocess
 
 app = FastAPI()
 
-DATA_DIR = "/data"  # Ensure operations are limited to this directory
+DATA_DIR = "./data_output"  # Ensure operations are limited to this directory DATA_DIR = "./data_output"
 
 @app.post("/run")
 async def run_task(task: str):
