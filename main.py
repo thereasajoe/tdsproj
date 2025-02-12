@@ -1,106 +1,91 @@
 from fastapi import FastAPI, Query
+import openai  # Replace with your LLM integration
 import subprocess
 import json
-import os
-import datetime
 import sqlite3
 
 app = FastAPI()
 
-DATA_DIR = "/data"  # Root directory for generated files
+# Configure OpenAI API (replace with your key)
+openai.api_key = "YOUR_OPENAI_API_KEY"
+
+# Define available tasks
+TASKS = {
+    "A1": "Install uv and run datagen.py with the user's email.",
+    "A2": "Format the contents of /data/format.md using prettier.",
+    "A3": "Count Wednesdays in /data/dates.txt and write the count to /data/dates-wednesdays.txt.",
+    "A4": "Sort contacts in /data/contacts.json and write to /data/contacts-sorted.json.",
+    "A5": "Extract first lines of 10 most recent log files from /data/logs/ to /data/logs-recent.txt.",
+    "A6": "Create an index.json mapping Markdown files to their titles.",
+    "A7": "Extract the sender’s email from /data/email.txt and write to /data/email-sender.txt.",
+    "A8": "Extract credit card number from /data/credit-card.png and write it to /data/credit-card.txt.",
+    "A9": "Find the most similar pair of comments in /data/comments.txt and write them to /data/comments-similar.txt.",
+    "A10": "Calculate total sales for 'Gold' tickets from /data/ticket-sales.db and write to /data/ticket-sales-gold.txt."
+}
+
+def classify_task(task_description):
+    """Uses an LLM to classify a task description into A1–A10"""
+    response = openai.ChatCompletion.create(
+        model="gpt-4-turbo",
+        messages=[{"role": "system", "content": "Classify the task into one of A1–A10 based on the description."},
+                  {"role": "user", "content": task_description}],
+        temperature=0.3
+    )
+    return response["choices"][0]["message"]["content"].strip()
+
+# Task Functions
+def run_task_A1():
+    subprocess.run(["uv", "run", "datagen.py", "user@example.com"], check=True)
+
+def run_task_A2():
+    subprocess.run(["npx", "prettier@3.4.2", "--write", "/data/format.md"], check=True)
+
+def run_task_A3():
+    with open("/data/dates.txt") as f:
+        dates = f.readlines()
+    wednesdays = sum(1 for date in dates if "Wed" in date)
+    with open("/data/dates-wednesdays.txt", "w") as f:
+        f.write(str(wednesdays))
+
+def run_task_A4():
+    with open("/data/contacts.json") as f:
+        contacts = json.load(f)
+    contacts.sort(key=lambda x: (x["last_name"], x["first_name"]))
+    with open("/data/contacts-sorted.json", "w") as f:
+        json.dump(contacts, f)
+
+def run_task_A5():
+    import os
+    logs = sorted(os.listdir("/data/logs"), key=lambda x: os.path.getmtime(f"/data/logs/{x}"), reverse=True)[:10]
+    with open("/data/logs-recent.txt", "w") as f:
+        for log in logs:
+            with open(f"/data/logs/{log}") as log_file:
+                f.write(log_file.readline())
+
+def run_task_A10():
+    conn = sqlite3.connect("/data/ticket-sales.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT SUM(price * units) FROM tickets WHERE type = 'Gold'")
+    result = cursor.fetchone()[0]
+    with open("/data/ticket-sales-gold.txt", "w") as f:
+        f.write(str(result))
+    conn.close()
+
+TASK_FUNCTIONS = {
+    "A1": run_task_A1,
+    "A2": run_task_A2,
+    "A3": run_task_A3,
+    "A4": run_task_A4,
+    "A5": run_task_A5,
+    "A10": run_task_A10
+}
 
 @app.get("/run")
-def run_task(task: str):
-    try:
-        if task.startswith("Install uv"):
-            return {"message": "Skipping manual installation. Run manually if needed."}
+def run_task(task: str = Query(..., title="Task Description")):
+    task_id = classify_task(task)
+    if task_id in TASK_FUNCTIONS:
+        TASK_FUNCTIONS[task_id]()
+        return {"status": "success", "task": task_id}
+    else:
+        return {"status": "error", "message": "Task not recognized"}
 
-        elif "datagen.py" in task:
-            email = task.split("with ")[-1].split(" as")[0]
-            cmd = f"uv run datagen.py {email}"
-            subprocess.run(cmd, shell=True, check=True)
-            return {"message": "Data generation completed."}
-
-        elif "format.md" in task:
-            cmd = "npx prettier@3.4.2 --write /data/format.md"
-            subprocess.run(cmd, shell=True, check=True)
-            return {"message": "Markdown formatted."}
-
-        elif "dates-wednesdays.txt" in task:
-            count = 0
-            with open(os.path.join(DATA_DIR, "dates.txt"), "r") as f:
-                for line in f:
-                    date_obj = datetime.datetime.strptime(line.strip(), "%Y-%m-%d")
-                    if date_obj.weekday() == 2:
-                        count += 1
-            with open(os.path.join(DATA_DIR, "dates-wednesdays.txt"), "w") as f:
-                f.write(str(count))
-            return {"message": f"Wednesdays count: {count}"}
-
-        elif "contacts-sorted.json" in task:
-            with open(os.path.join(DATA_DIR, "contacts.json"), "r") as f:
-                contacts = json.load(f)
-            contacts.sort(key=lambda x: (x["last_name"], x["first_name"]))
-            with open(os.path.join(DATA_DIR, "contacts-sorted.json"), "w") as f:
-                json.dump(contacts, f, indent=2)
-            return {"message": "Contacts sorted."}
-
-        elif "logs-recent.txt" in task:
-            log_files = sorted(os.listdir(os.path.join(DATA_DIR, "logs")), reverse=True)[:10]
-            first_lines = []
-            for log in log_files:
-                with open(os.path.join(DATA_DIR, "logs", log), "r") as f:
-                    first_lines.append(f.readline().strip())
-            with open(os.path.join(DATA_DIR, "logs-recent.txt"), "w") as f:
-                f.write("\n".join(first_lines))
-            return {"message": "Recent log lines extracted."}
-
-        elif "docs/index.json" in task:
-            index = {}
-            for root, _, files in os.walk(os.path.join(DATA_DIR, "docs")):
-                for file in files:
-                    if file.endswith(".md"):
-                        with open(os.path.join(root, file), "r") as f:
-                            for line in f:
-                                if line.startswith("# "):
-                                    index[file] = line.strip("# ").strip()
-                                    break
-            with open(os.path.join(DATA_DIR, "docs/index.json"), "w") as f:
-                json.dump(index, f, indent=2)
-            return {"message": "Docs indexed."}
-
-        elif "email-sender.txt" in task:
-            with open(os.path.join(DATA_DIR, "email.txt"), "r") as f:
-                for line in f:
-                    if line.startswith("From: "):
-                        email_address = line.split("<")[1].split(">")[0]
-                        break
-            with open(os.path.join(DATA_DIR, "email-sender.txt"), "w") as f:
-                f.write(email_address)
-            return {"message": f"Extracted sender email: {email_address}"}
-
-        elif "credit-card.txt" in task:
-            return {"message": "Credit card OCR task requires an LLM (implement separately)."}
-
-        elif "comments-similar.txt" in task:
-            return {"message": "Embeddings task requires an LLM (implement separately)."}
-
-        elif "ticket-sales-gold.txt" in task:
-            conn = sqlite3.connect(os.path.join(DATA_DIR, "ticket-sales.db"))
-            cursor = conn.cursor()
-            cursor.execute("SELECT SUM(units * price) FROM tickets WHERE type='Gold'")
-            total_sales = cursor.fetchone()[0]
-            conn.close()
-            with open(os.path.join(DATA_DIR, "ticket-sales-gold.txt"), "w") as f:
-                f.write(str(total_sales))
-            return {"message": f"Total Gold ticket sales: {total_sales}"}
-
-        else:
-            return {"error": "Unknown task."}
-
-    except Exception as e:
-        return {"error": str(e)}
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
