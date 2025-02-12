@@ -1,5 +1,9 @@
 fastapi
 uvicorn
+requests
+pillow
+pytesseract
+sentence-transformers
+torch
 openai
 pydantic
-requests
