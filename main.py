@@ -68,7 +68,7 @@ def format_markdown():
     """Formats /data/format.md using Prettier 3.4.2"""
     try:
         file_path = "data/format.md"
-        subprocess.run(["npx", "prettier@3.4.2", "--write", file_path], check=True, shell=True)
+        subprocess.run(["npm", "prettier@3.4.2", "--write", file_path], check=True, shell=True)
         return {"message": f"Formatted {file_path} using Prettier"}
     except Exception as e:
         return {"error": str(e)}
