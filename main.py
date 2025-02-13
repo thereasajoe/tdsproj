@@ -73,11 +73,11 @@ def format_markdown():
         raise HTTPException(status_code=404, detail="format.md not found")
     
     try:
-        # Install Prettier if not available
+        # Install Prettier globally if not installed
         subprocess.run(["npm", "install", "--global", "prettier@3.4.2"], check=True)
 
         # Format the file in-place
-        subprocess.run(["npx", "prettier", "--write", input_path], check=True)
+        subprocess.run(["prettier", "--write", input_path], check=True)
 
         return f"✅ Successfully formatted {input_path} using Prettier@3.4.2"
 
