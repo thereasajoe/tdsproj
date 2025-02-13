@@ -12,6 +12,8 @@ import numpy as np
 import sqlite3
 import glob
 import re
+import subprocess
+import sys
 # Load environment variables
 load_dotenv("secret.env")
 AIPROXY_TOKEN = os.getenv("AIPROXY_TOKEN")
@@ -36,6 +38,29 @@ DATA_DIR = os.path.join(BASE_DIR, "data")
 
 class TaskRequest(BaseModel):
     task: str
+
+
+def run_datagen(email):
+    """Run datagen.py with the provided email as an argument."""
+    script_url = "https://raw.githubusercontent.com/sanand0/tools-in-data-science-public/tds-2025-01/project-1/datagen.py"
+    try:
+        subprocess.run(["curl", "-sSL", script_url, "|", "python", "-", email], check=True, shell=True)
+        return "✅ Successfully ran datagen.py with provided email"
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to run datagen.py: {str(e)}")
+
+def format_markdown():
+    """Format /data/format.md using prettier@3.4.2."""
+    input_path = os.path.join(DATA_DIR, "format.md")
+    if not os.path.exists(input_path):
+        raise HTTPException(status_code=404, detail="format.md not found")
+    
+    try:
+        subprocess.run(["uv", "pip", "install", "prettier==3.4.2"], check=True)
+        subprocess.run(["npx", "prettier", "--write", input_path], check=True)
+        return f"✅ Successfully formatted {input_path} using prettier@3.4.2"
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to format markdown: {str(e)}")
 
 def sort_contacts():
     """Reads, sorts, and saves contacts in /data/contacts.json"""
@@ -317,7 +342,12 @@ async def favicon():
 @app.post("/run")
 async def run_task(task: str = Query(..., description="Plain-English task description")):
     """Executes a task based on natural language input."""
-    if "sort contacts" in task.lower():
+    if "run datagen" in task.lower():
+        email = task.split()[-1]  # Assume the email is the last word in the task description
+        return {"task": task, "output": run_datagen(email)}
+    elif "format markdown" in task.lower():
+        return {"task": task, "output": format_markdown()}
+    elif "sort contacts" in task.lower():
         return {"task": task, "output": sort_contacts()}
     elif "count wednesdays" in task.lower():
         return {"task": task, "output": count_wednesdays()}
