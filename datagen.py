@@ -20,7 +20,7 @@ import time
 from PIL import Image, ImageDraw, ImageFont
 from faker import Faker
 
-config = {"root": "/data"}
+config = {"root": "./data"}
 
 
 def num(str):
@@ -295,3 +295,5 @@ if __name__ == "__main__":
     a8_credit_card_image()
     a9_comments()
     a10_ticket_sales()
+
+# DISCLAIMER: THIS SCRIPT WILL CHANGE BEFORE THE EVALUATION. TREAT THIS AS A GUIDE.
