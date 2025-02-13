@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+requests
+pillow
+pytesseract
+sentence-transformers
+torch
+openai
+pydantic
+python-dotenv 
+numpy
+
