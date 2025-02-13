@@ -5,8 +5,6 @@ import os
 from dotenv import load_dotenv
 import openai
 from openai import OpenAI
-
-client = OpenAI(api_key=AIPROXY_TOKEN)
 from datetime import datetime
 import base64
 import numpy as np
@@ -16,6 +14,7 @@ import re
 # Load environment variables
 load_dotenv("secret.env")
 AIPROXY_TOKEN = os.getenv("AIPROXY_TOKEN")
+client = OpenAI(api_key=AIPROXY_TOKEN)
 if not AIPROXY_TOKEN:
     raise ValueError("⚠️ AIPROXY_TOKEN is missing! Check your secret.env file.")
 
@@ -132,7 +131,7 @@ def extract_email():
 
 def extract_credit_card():
     """Reads /data/credit-card.png, extracts credit card number using OpenAI Vision API, and saves it."""
-    input_path = os.path.join(DATA_DIR, "credit-card.png")
+    input_path = os.path.join(DATA_DIR, "credit_card.png")
     output_path = os.path.join(DATA_DIR, "credit-card.txt")
 
     if not os.path.exists(input_path):
