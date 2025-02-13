@@ -1,5 +1,6 @@
 import json
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 import os
 from dotenv import load_dotenv
@@ -17,6 +18,10 @@ AIPROXY_TOKEN = os.getenv("AIPROXY_TOKEN")
 client = OpenAI(api_key=AIPROXY_TOKEN)
 if not AIPROXY_TOKEN:
     raise ValueError("⚠️ AIPROXY_TOKEN is missing! Check your secret.env file.")
+
+
+client = openai.OpenAI(api_key=AIPROXY_TOKEN, base_url="https://aiproxy.sanand.workers.dev/openai/v1")
+print(f"✅ AIPROXY_TOKEN loaded successfully: {AIPROXY_TOKEN[:5]}******")  # Masked for security
 
 # Initialize FastAPI app
 app = FastAPI()
@@ -183,7 +188,7 @@ def find_similar_comments():
         response = client.embeddings.create(model="text-embedding-3-small",
         input=comments)
 
-        embeddings = np.array([item["embedding"] for item in response.data])
+        embeddings = np.array([item.embedding for item in response.data])
 
         # Compute cosine similarity
         similarity_matrix = np.dot(embeddings, embeddings.T)
@@ -301,6 +306,14 @@ def extract_markdown_headers():
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+@app.get("/")
+async def root():
+    return JSONResponse(content={"message": "Welcome to the API root"})
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return FileResponse("path/to/your/favicon.ico")
+
 @app.post("/run")
 async def run_task(task: str = Query(..., description="Plain-English task description")):
     """Executes a task based on natural language input."""
@@ -333,3 +346,5 @@ async def run_task(task: str = Query(..., description="Plain-English task descri
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+
