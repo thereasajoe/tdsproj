@@ -14,6 +14,7 @@ import glob
 import re
 import subprocess
 import sys
+import shutil
 # Load environment variables
 load_dotenv("secret.env")
 AIPROXY_TOKEN = os.getenv("AIPROXY_TOKEN")
@@ -65,16 +66,15 @@ def run_datagen(email):
         raise HTTPException(status_code=500, detail=f"Failed to run datagen.py: {str(e)}")
 
 import subprocess
-import os
-
-DATA_DIR = "./data_output"
 
 def format_markdown():
-    """Formats /data/format.md using Prettier 3.4.2"""
+    """Formats /data/format.md using Prettier 3.4.2 with the Markdown parser"""
     try:
-        input_path = "data/format.md"
-        subprocess.run(["npx", "prettier@3.4.2", "--write", input_path], check=True, shell=True)
-        return {"message": f"Formatted {input_path} using Prettier"}
+        input_path = "/data/format.md"
+        subprocess.run(["npx", "prettier", "--write", "--parser", "markdown", input_path], check=True)
+        return {"message": f"Formatted {input_path} using Prettier 3.4.2 with Markdown parser"}
+    except subprocess.CalledProcessError as e:
+        return {"error": f"Prettier failed: {str(e)}"}
     except Exception as e:
         return {"error": str(e)}
 
