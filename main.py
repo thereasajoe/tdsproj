@@ -64,14 +64,20 @@ def run_datagen(email):
     except subprocess.CalledProcessError as e:
         raise HTTPException(status_code=500, detail=f"Failed to run datagen.py: {str(e)}")
 
+import subprocess
+import os
+
+DATA_DIR = "./data_output"
+
 def format_markdown():
     """Formats /data/format.md using Prettier 3.4.2"""
     try:
-        file_path = "data/format.md"
-        subprocess.run(["npm", "prettier@3.4.2", "--write", file_path], check=True, shell=True)
-        return {"message": f"Formatted {file_path} using Prettier"}
+        input_path = "data/format.md"
+        subprocess.run(["npx", "prettier@3.4.2", "--write", input_path], check=True, shell=True)
+        return {"message": f"Formatted {input_path} using Prettier"}
     except Exception as e:
         return {"error": str(e)}
+
 
 def sort_contacts():
     """Reads, sorts, and saves contacts in /data/contacts.json"""
@@ -356,8 +362,10 @@ async def run_task(task: str = Query(..., description="Plain-English task descri
     if "run datagen" in task.lower():
         email = task.split()[-1]  # Assume the email is the last word in the task description
         return {"task": task, "output": run_datagen(email)}
-    elif "format markdown" in task.lower():
-        return {"task": task, "output": format_markdown()}
+    elif "format" in task.lower() and "prettier" in task.lower():
+        return format_markdown()                                       
+    #elif "format markdown" in task.lower():
+        #return {"task": task, "output": format_markdown()}
     elif "sort contacts" in task.lower():
         return {"task": task, "output": sort_contacts()}
     elif "count wednesdays" in task.lower():
