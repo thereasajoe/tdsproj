@@ -65,15 +65,22 @@ def run_datagen(email):
         raise HTTPException(status_code=500, detail=f"Failed to run datagen.py: {str(e)}")
 
 def format_markdown():
-    """Format /data/format.md using prettier@3.4.2."""
+    """Format /data/format.md using Prettier."""
+    
     input_path = os.path.join(DATA_DIR, "format.md")
+
     if not os.path.exists(input_path):
         raise HTTPException(status_code=404, detail="format.md not found")
     
     try:
-        subprocess.run(["uv", "pip", "install", "prettier==3.4.2"], check=True)
+        # Install Prettier if not available
+        subprocess.run(["npm", "install", "--global", "prettier@3.4.2"], check=True)
+
+        # Format the file in-place
         subprocess.run(["npx", "prettier", "--write", input_path], check=True)
-        return f"✅ Successfully formatted {input_path} using prettier@3.4.2"
+
+        return f"✅ Successfully formatted {input_path} using Prettier@3.4.2"
+
     except subprocess.CalledProcessError as e:
         raise HTTPException(status_code=500, detail=f"Failed to format markdown: {str(e)}")
 
