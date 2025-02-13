@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
+from fastapi.responses import FileResponse
 import os
 import subprocess
 import json
@@ -128,3 +129,11 @@ def read_file(path: str):
         return content
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="File not found.")
+@app.get("/")
+def read_root():
+    return {"message": "Welcome to the automation agent API"}
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return FileResponse("path/to/favicon.ico")
