@@ -4,6 +4,9 @@ from pydantic import BaseModel
 import os
 from dotenv import load_dotenv
 import openai
+from openai import OpenAI
+
+client = OpenAI(api_key=AIPROXY_TOKEN)
 from datetime import datetime
 import base64
 import numpy as np
@@ -20,8 +23,8 @@ if not AIPROXY_TOKEN:
 app = FastAPI()
 
 # Set OpenAI API key and base URL for AI Proxy
-openai.api_key = AIPROXY_TOKEN
-openai.api_base = "https://aiproxy.sanand.workers.dev/openai/v1"
+# TODO: The 'openai.api_base' option isn't read in the client API. You will need to pass it when you instantiate the client, e.g. 'OpenAI(base_url="https://aiproxy.sanand.workers.dev/openai/v1")'
+# openai.api_base = "https://aiproxy.sanand.workers.dev/openai/v1"
 
 # Define base data directory
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -65,7 +68,28 @@ def count_wednesdays():
             dates = file.readlines()
 
         # Convert each line to a date and count Wednesdays
-        wednesday_count = sum(1 for date in dates if datetime.strptime(date.strip(), "%Y-%m-%d").weekday() == 2)
+        date_formats = [
+            "%Y-%m-%d",
+            "%b %d, %Y",
+            "%d-%b-%Y",
+            "%Y/%m/%d %H:%M:%S"
+        ]
+
+        wednesday_count = 0
+        for date_str in dates:
+            date_str = date_str.strip()
+            for date_format in date_formats:
+                try:
+                    date_obj = datetime.strptime(date_str, date_format)
+                    if date_obj.weekday() == 2:  # Wednesday is 2 in Python's weekday() method
+                        wednesday_count += 1
+                    break
+                except ValueError:
+                    continue
+            else:
+                raise ValueError(f"Unable to parse date: {date_str}")
+
+        #wednesday_count = sum(1 for date in dates if datetime.strptime(date.strip(), "%Y-%m-%d").weekday() == 2)
 
         # Save the result
         with open(output_path, "w", encoding="utf-8") as file:
@@ -89,15 +113,13 @@ def extract_email():
             email_content = file.read()
 
         # Use GPT-4o-mini to extract the sender's email
-        response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are an email processing assistant. Extract only the sender's email address."},
-                {"role": "user", "content": email_content}
-            ]
-        )
+        response = client.chat.completions.create(model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "You are an email processing assistant. Extract only the sender's email address."},
+            {"role": "user", "content": email_content}
+        ])
 
-        sender_email = response["choices"][0]["message"]["content"].strip()
+        sender_email = response.choices[0].message.content.strip()
 
         # Save the extracted email
         with open(output_path, "w", encoding="utf-8") as file:
@@ -122,18 +144,16 @@ def extract_credit_card():
             base64_image = base64.b64encode(image_file.read()).decode("utf-8")
 
         # Use OpenAI Vision API to analyze the image
-        response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are an OCR assistant. Extract only the credit card number from the image."},
-                {"role": "user", "content": [
-                    {"type": "text", "text": "Extract the credit card number from this image:"},
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}}
-                ]}
-            ]
-        )
+        response = client.chat.completions.create(model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "You are an OCR assistant. Extract only the credit card number from the image."},
+            {"role": "user", "content": [
+                {"type": "text", "text": "Extract the credit card number from this image:"},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}}
+            ]}
+        ])
 
-        card_number = response["choices"][0]["message"]["content"].strip().replace(" ", "")
+        card_number = response.choices[0].message.content.strip().replace(" ", "")
 
         # Save the extracted number
         with open(output_path, "w", encoding="utf-8") as file:
@@ -161,12 +181,10 @@ def find_similar_comments():
             raise HTTPException(status_code=400, detail="Not enough comments to compare.")
 
         # Get embeddings for all comments
-        response = openai.Embedding.create(
-            model="text-embedding-3-small",
-            input=comments
-        )
+        response = client.embeddings.create(model="text-embedding-3-small",
+        input=comments)
 
-        embeddings = np.array([item["embedding"] for item in response["data"]])
+        embeddings = np.array([item["embedding"] for item in response.data])
 
         # Compute cosine similarity
         similarity_matrix = np.dot(embeddings, embeddings.T)
@@ -306,14 +324,12 @@ async def run_task(task: str = Query(..., description="Plain-English task descri
 
     # If task is not predefined, call the LLM
     try:
-        response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are an automation assistant."},
-                {"role": "user", "content": task}
-            ]
-        )
-        task_output = response["choices"][0]["message"]["content"]
+        response = client.chat.completions.create(model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "You are an automation assistant."},
+            {"role": "user", "content": task}
+        ])
+        task_output = response.choices[0].message.content
         return {"task": task, "output": task_output}
 
     except Exception as e:
