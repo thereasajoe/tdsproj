@@ -1,6 +1,7 @@
 import json
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
+from openai import OpenAI
 import os
 from dotenv import load_dotenv
 import openai
@@ -13,6 +14,7 @@ import re
 # Load environment variables
 load_dotenv("secret.env")
 AIPROXY_TOKEN = os.getenv("AIPROXY_TOKEN")
+client = openai.Client(api_key=AIPROXY_TOKEN)
 if not AIPROXY_TOKEN:
     raise ValueError("⚠️ AIPROXY_TOKEN is missing! Check your secret.env file.")
 
@@ -65,7 +67,28 @@ def count_wednesdays():
             dates = file.readlines()
 
         # Convert each line to a date and count Wednesdays
-        wednesday_count = sum(1 for date in dates if datetime.strptime(date.strip(), "%Y-%m-%d").weekday() == 2)
+        date_formats = [
+            "%Y-%m-%d",
+            "%b %d, %Y",
+            "%d-%b-%Y",
+            "%Y/%m/%d %H:%M:%S"
+        ]
+
+        wednesday_count = 0
+        for date_str in dates:
+            date_str = date_str.strip()
+            for date_format in date_formats:
+                try:
+                    date_obj = datetime.strptime(date_str, date_format)
+                    if date_obj.weekday() == 2:  # Wednesday is 2 in Python's weekday() method
+                        wednesday_count += 1
+                    break
+                except ValueError:
+                    continue
+            else:
+                raise ValueError(f"Unable to parse date: {date_str}")
+
+        #wednesday_count = sum(1 for date in dates if datetime.strptime(date.strip(),"%Y-%m-%d").weekday() == 2)
 
         # Save the result
         with open(output_path, "w", encoding="utf-8") as file:
@@ -306,6 +329,7 @@ async def run_task(task: str = Query(..., description="Plain-English task descri
 
     # If task is not predefined, call the LLM
     try:
+        client = OpenAI()
         response = openai.ChatCompletion.create(
             model="gpt-4o-mini",
             messages=[
