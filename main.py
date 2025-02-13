@@ -40,12 +40,27 @@ class TaskRequest(BaseModel):
     task: str
 
 
+
 def run_datagen(email):
-    """Run datagen.py with the provided email as an argument."""
-    script_url = "https://raw.githubusercontent.com/sanand0/tools-in-data-science-public/tds-2025-01/project-1/datagen.py"
+    """Run datagen.py with the provided email, ensuring output is stored in /data/."""
+
+    input_path = os.path.join(DATA_DIR, "datagen.py")  # Input path for the script
+
     try:
-        subprocess.run(["curl", "-sSL", script_url, "|", "python", "-", email], check=True, shell=True)
-        return "✅ Successfully ran datagen.py with provided email"
+        # Ensure /data directory exists
+        os.makedirs(DATA_DIR, exist_ok=True)
+
+        # Download datagen.py to /data/
+        subprocess.run(["curl", "-sSL", "https://raw.githubusercontent.com/sanand0/tools-in-data-science-public/tds-2025-01/project-1/datagen.py", "-o", input_path], check=True)
+
+        # Ensure the script has execute permissions
+        os.chmod(input_path, 0o755)
+
+        # Run datagen.py with the provided email inside /data/
+        subprocess.run(["python", input_path, email], check=True, cwd=DATA_DIR)
+
+        return f"✅ Successfully ran datagen.py with {email}. Data files saved in {DATA_DIR}"
+
     except subprocess.CalledProcessError as e:
         raise HTTPException(status_code=500, detail=f"Failed to run datagen.py: {str(e)}")
 
