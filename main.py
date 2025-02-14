@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import PlainTextResponse
+from dotenv import load_dotenv
 import os
 import re
 import shutil
@@ -368,13 +369,22 @@ def handle_task_A7():
         email_content = f.read()
 
     # 3. Prepare the LLM environment
+    load_dotenv("secret.env")
+    AIPROXY_TOKEN = os.getenv("AIPROXY_TOKEN")
+    #client = OpenAI(api_key=AIPROXY_TOKEN)
+    if not AIPROXY_TOKEN:
+        raise ValueError("⚠️ AIPROXY_TOKEN is missing! Check your secret.env file.")
+
+
+    client = openai.OpenAI(api_key=AIPROXY_TOKEN, base_url="https://aiproxy.sanand.workers.dev/openai/v1")
+    print(f"✅ AIPROXY_TOKEN loaded successfully: {AIPROXY_TOKEN[:5]}******")  # Masked for security
     token = os.environ.get("AIPROXY_TOKEN")
 
-    if not token:
-        return {"error": "AIPROXY_TOKEN environment variable not set."}
+    #if not token:
+        #return {"error": "AIPROXY_TOKEN environment variable not set."}
 
-    openai.api_key = token
-    openai.api_base = "https://aiproxy.sanand.workers.dev/openai/v1"
+    #openai.api_key = token
+    #openai.api_base = "https://aiproxy.sanand.workers.dev/openai/v1"
 
     # 4. Build a prompt instructing GPT-4o-Mini to extract only the sender’s email
     #    We'll ask for a JSON response to parse it safely.
