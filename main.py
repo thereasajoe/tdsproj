@@ -1,694 +1,408 @@
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import PlainTextResponse
-import os
-import re
-import shutil
-import subprocess
-import requests
-from datetime import datetime
-import openai
 import json
-import pytesseract
-from PIL import Image
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel
+import os
+from dotenv import load_dotenv
+import openai
+from openai import OpenAI
+from datetime import datetime
+import base64
 import numpy as np
 import sqlite3
-import base64
-from dotenv import load_dotenv
+import glob
+import re
+import subprocess
+import sys
+import shutil
+import logging
 
+# Load environment variables
+load_dotenv("secret.env")
+AIPROXY_TOKEN = os.getenv("AIPROXY_TOKEN")
+client = OpenAI(api_key=AIPROXY_TOKEN)
+if not AIPROXY_TOKEN:
+    raise ValueError("⚠️ AIPROXY_TOKEN is missing! Check your secret.env file.")
+
+
+client = openai.OpenAI(api_key=AIPROXY_TOKEN, base_url="https://aiproxy.sanand.workers.dev/openai/v1")
+print(f"✅ AIPROXY_TOKEN loaded successfully: {AIPROXY_TOKEN[:5]}******")  # Masked for security
+
+# Initialize FastAPI app
 app = FastAPI()
 
-@app.post("/run")
-async def run_task(task: str = Query(...)):
-    if not task:
-        raise HTTPException(status_code=400, detail="Task description required")
-    
-    # Use the LLM to parse the task instruction.
+# Set OpenAI API key and base URL for AI Proxy
+# TODO: The 'openai.api_base' option isn't read in the client API. You will need to pass it when you instantiate the client, e.g. 'OpenAI(base_url="https://aiproxy.sanand.workers.dev/openai/v1")'
+# openai.api_base = "https://aiproxy.sanand.workers.dev/openai/v1"
+
+# Define base data directory
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data/")
+
+class TaskRequest(BaseModel):
+    task: str
+
+# Define base data directory
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data/")
+
+class TaskRequest(BaseModel):
+    task: str
+
+
+def run_datagen(email):
+    """Run datagen.py with the provided email, ensuring output is stored in /data/."""
+
+    input_path = os.path.join(DATA_DIR, "datagen.py")  # Input path for the script
+
     try:
-        parsed_task = parse_task_with_llm(task)
+        # Ensure /data directory exists
+        os.makedirs(DATA_DIR, exist_ok=True)
+
+        # Download datagen.py to /data/
+        subprocess.run(["curl", "-sSL", "https://raw.githubusercontent.com/sanand0/tools-in-data-science-public/tds-2025-01/project-1/datagen.py", "-o", input_path], check=True)
+
+        # Ensure the script has execute permissions
+        os.chmod(input_path, 0o755)
+
+        # Run datagen.py with the provided email inside /data/
+        subprocess.run(["python", input_path, email], check=True, cwd=DATA_DIR)
+
+        return f"✅ Successfully ran datagen.py with {email}. Data files saved in {DATA_DIR}"
+
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to run datagen.py: {str(e)}")
+
+
+
+def format_markdown():
+    """Formats /data/format.md using Prettier 3.4.2 with the Markdown parser"""
+    try:
+        input_path = "/data/format.md"
+        subprocess.run(["npx", "prettier", "--write", "--parser", "markdown", input_path],capture_output=True,
+        text=True, check=True)
+        return {"message": f"Formatted {input_path} using Prettier 3.4.2 with Markdown parser"}
+    except subprocess.CalledProcessError as e:
+        return {"error": f"Prettier failed: {str(e)}"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error parsing task with LLM: {str(e)}")
-    
-    task_code = parsed_task.get("task_code", "UNKNOWN").upper()
-    
-    # Map the task_code to the corresponding internal function.
+        return {"error": str(e)}
+
+
+def sort_contacts():
+    """Reads, sorts, and saves contacts in /data/contacts.json"""
+    input_path = os.path.join(DATA_DIR, "contacts.json")
+    output_path = os.path.join(DATA_DIR, "contacts-sorted.json")
+
+    if not os.path.exists(input_path):
+        raise HTTPException(status_code=404, detail="contacts.json not found")
+
     try:
-        if task_code == "A1":
-            user_email = os.environ.get("USER_EMAIL", "default@example.com")
-            result = handle_task_A1(user_email)
-        elif task_code == "A2":
-            result = handle_task_A2()
-        elif task_code == "A3":
-            result = handle_task_A3()
-        elif task_code == "A4":
-            result = handle_task_A4()
-        elif task_code == "A5":
-            result = handle_task_A5()
-        elif task_code == "A6":
-            result = handle_task_A6()
-        elif task_code == "A7":
-            result = handle_task_A7()
-        elif task_code == "A8":
-            result = handle_task_A8()
-        elif task_code == "A9":
-            result = handle_task_A9()
-        elif task_code == "A10":
-            result = handle_task_A10()
-        # Future tasks (A4 - A10) can be integrated similarly.
-        else:
-            # If LLM returned UNKNOWN or an unsupported task code.
-            raise Exception("Unrecognized or unsupported task code returned by LLM.")
-        
-        return {"status": "success", "result": result}
+        with open(input_path, "r", encoding="utf-8") as file:
+            contacts = json.load(file)
+
+        sorted_contacts = sorted(contacts, key=lambda x: (x["last_name"], x["first_name"]))
+
+        with open(output_path, "w", encoding="utf-8") as file:
+            json.dump(sorted_contacts, file, indent=4)
+
+        return f"✅ Contacts sorted and saved to {output_path}"
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/read", response_class=PlainTextResponse)
-async def read_file(path: str = Query(...)):
-    """
-    GET endpoint to read and return the content of a file.
-    Ensures only files under /data (as specified in the task) are accessed.
-    """
-    # Security check: Path must start with /data
-    if not path.startswith("/data"):
-        raise HTTPException(status_code=400, detail="Invalid file path: Must start with /data")
-    
-    # Translate the given path into a local path.
-    # Assuming your repository has a 'data' folder in its root,
-    # we remove the leading '/data' and join with the repository's data directory.
-    base_dir = os.path.join(os.getcwd(), "data")  # local data folder
-    relative_path = os.path.relpath(path, "/data")  # e.g. "sample.txt"
-    file_path = os.path.join(base_dir, relative_path)
-    
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="File not found")
-    
+def count_wednesdays():
+    """Reads /data/dates.txt, counts Wednesdays, and saves the result."""
+    input_path = os.path.join(DATA_DIR, "dates.txt")
+    output_path = os.path.join(DATA_DIR, "dates-wednesdays.txt")
+
+    if not os.path.exists(input_path):
+        raise HTTPException(status_code=404, detail="dates.txt not found")
+
     try:
-        with open(file_path, "r") as f:
-            content = f.read()
-        return content
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
+        with open(input_path, "r", encoding="utf-8") as file:
+            dates = file.readlines()
 
-def handle_task_A1(user_email: str):
-    # 1. Check if 'uv' is installed.
-    if shutil.which("uv") is None:
-        try:
-            install_proc = subprocess.run(
-                ["pip", "install", "uv"],
-                check=True,
-                capture_output=True,
-                text=True
-            )
-            print("Installed uv:", install_proc.stdout)
-        except subprocess.CalledProcessError as e:
-            raise Exception("Failed to install uv: " + e.stderr)
-    
-    # 2. Download the datagen.py script.
-    datagen_url = "https://raw.githubusercontent.com/sanand0/tools-in-data-science-public/tds-2025-01/project-1/datagen.py"
-    response = requests.get(datagen_url)
-    if response.status_code != 200:
-        raise Exception(f"Failed to download datagen.py, status code: {response.status_code}")
-    
-    datagen_filename = "datagen.py"
-    with open(datagen_filename, "w") as f:
-        f.write(response.text)
-    
-    # 3. Modify the script to use a local data folder instead of '/data'.
-    #    We'll assume your local folder is the 'data' directory in your project.
-    local_data_dir = os.path.join(os.getcwd(), "data")
-    
-    # Read the downloaded file
-    with open(datagen_filename, "r") as f:
-        content = f.read()
-    
-    # Replace occurrences of '/data' (in quotes) with the local data directory.
-    # This regex will match both single and double quotes.
-    new_content = re.sub(r'([\'"])/data([\'"])', f'\\1{local_data_dir}\\2', content)
-    
-    # Write the modified content back to datagen.py
-    with open(datagen_filename, "w") as f:
-        f.write(new_content)
-    
-    # 4. Run datagen.py with the user's email as the only argument.
-    try:
-        proc = subprocess.run(
-            ["python", datagen_filename, user_email],
-            check=True,
-            capture_output=True,
-            text=True
-        )
-    except subprocess.CalledProcessError as e:
-        raise Exception("Error running datagen.py: " + e.stderr)
-    
-    return {"stdout": proc.stdout, "stderr": proc.stderr}
+        # Convert each line to a date and count Wednesdays
+        date_formats = [
+            "%Y-%m-%d",
+            "%b %d, %Y",
+            "%d-%b-%Y",
+            "%Y/%m/%d %H:%M:%S"
+        ]
 
-
-def handle_task_A2():
-    """
-    Formats the file /data/format.md using prettier@3.4.2.
-    The file is updated in-place.
-    
-    This version mimics the evaluation script: it pipes the file content into Prettier
-    using the "--stdin-filepath /data/format.md" option.
-    """
-    # Define the local data directory (project-root/data)
-    local_data_dir = os.path.join(os.getcwd(), "data")
-    
-    # Construct the local file path for format.md
-    file_path = os.path.join(local_data_dir, "format.md")
-    
-    # Check if the file exists
-    if not os.path.exists(file_path):
-        raise Exception(f"File not found: {file_path}")
-    
-    # Read the current contents of the file.
-    with open(file_path, "r") as f:
-        original = f.read()
-    
-    try:
-        # Build the command as a single string.
-        cmd = "npx prettier@3.4.2 --stdin-filepath /data/format.md"
-        # Run Prettier using the command string, passing the current working directory and environment.
-        proc = subprocess.run(
-            cmd,
-            input=original,
-            capture_output=True,
-            text=True,
-            check=True,
-            shell=True,  # Command is provided as a string.
-            cwd=os.getcwd(),         # Ensure we run in the project root.
-            env=os.environ.copy()      # Pass the current environment.
-        )
-        formatted = proc.stdout
-        
-        # Write the formatted content back to the file.
-        with open(file_path, "w") as f:
-            f.write(formatted)
-        
-        return {"stdout": formatted, "stderr": proc.stderr}
-    except subprocess.CalledProcessError as e:
-        raise Exception("Error formatting file: " + e.stderr)
-
-def handle_task_A3():
-    """
-    Reads data/dates.txt, counts the number of Wednesdays,
-    and writes the count to data/dates-wednesdays.txt.
-    """
-    # Define the local data directory and file paths.
-    local_data_dir = os.path.join(os.getcwd(), "data")
-    input_file = os.path.join(local_data_dir, "dates.txt")
-    output_file = os.path.join(local_data_dir, "dates-wednesdays.txt")
-
-    if not os.path.exists(input_file):
-        raise Exception(f"File not found: {input_file}")
-
-    # Define a list of possible date formats.
-    date_formats = [
-        "%Y/%m/%d %H:%M:%S",  # e.g., 2008/04/22 06:26:02
-        "%Y-%m-%d",           # e.g., 2006-07-21
-        "%b %d, %Y",          # e.g., Sep 11, 2006
-        "%d-%b-%Y",           # e.g., 28-Nov-2021
-    ]
-
-    wednesday_count = 0
-
-    with open(input_file, "r") as file:
-        for line in file:
-            line = line.strip()
-            if not line:
-                continue  # Skip empty lines
-
-            parsed_date = None
-            # Try each date format until one succeeds.
-            for fmt in date_formats:
+        wednesday_count = 0
+        for date_str in dates:
+            date_str = date_str.strip()
+            for date_format in date_formats:
                 try:
-                    parsed_date = datetime.strptime(line, fmt)
-                    break  # Exit loop if parsing is successful.
+                    date_obj = datetime.strptime(date_str, date_format)
+                    if date_obj.weekday() == 2:  # Wednesday is 2 in Python's weekday() method
+                        wednesday_count += 1
+                    break
                 except ValueError:
                     continue
-
-            if parsed_date is None:
-                # Optionally log the unparsable line.
-                print(f"Warning: Could not parse date: {line}")
-                continue
-
-            # datetime.weekday() returns Monday=0, Tuesday=1, Wednesday=2, etc.
-            if parsed_date.weekday() == 2:
-                wednesday_count += 1
-
-    # Write just the count to the output file.
-    with open(output_file, "w") as file:
-        file.write(str(wednesday_count))
-
-    return {"wednesday_count": wednesday_count}
-
-def handle_task_A4():
-    """
-    Sorts the array of contacts in /data/contacts.json by last_name, then first_name,
-    and writes the result to /data/contacts-sorted.json.
-    """
-    # Define the local data directory.
-    local_data_dir = os.path.join(os.getcwd(), "data")
-    
-    # Construct paths for the input and output files.
-    contacts_path = os.path.join(local_data_dir, "contacts.json")
-    sorted_contacts_path = os.path.join(local_data_dir, "contacts-sorted.json")
-    
-    # Ensure contacts.json exists.
-    if not os.path.exists(contacts_path):
-        raise Exception(f"File not found: {contacts_path}")
-    
-    # Read contacts.json.
-    with open(contacts_path, "r") as f:
-        try:
-            contacts = json.load(f)
-        except Exception as e:
-            raise Exception("Error reading contacts.json: " + str(e))
-    
-    # Sort contacts by last_name and then first_name.
-    sorted_contacts = sorted(
-        contacts,
-        key=lambda c: (c.get("last_name", "").lower(), c.get("first_name", "").lower())
-    )
-    
-    # Write the sorted contacts to contacts-sorted.json with indentation.
-    with open(sorted_contacts_path, "w") as f:
-        json.dump(sorted_contacts, f, indent=2)
-    
-    return {"sorted_contacts": sorted_contacts}
-
-def handle_task_A5():
-    log_dir = "./data/logs"
-    output_file = "./data/logs-recent.txt"
-    
-    if not os.path.isdir(log_dir):
-        raise FileNotFoundError("Logs directory not found")
-    
-    try:
-        log_files = sorted(
-            [f for f in os.listdir(log_dir) if f.endswith(".log")],
-            key=lambda f: os.path.getmtime(os.path.join(log_dir, f)),
-            reverse=True
-        )[:10]
-        
-        with open(output_file, "w", encoding="utf-8") as outfile:
-            for log_file in log_files:
-                log_path = os.path.join(log_dir, log_file)
-                with open(log_path, "r", encoding="utf-8") as infile:
-                    first_line = infile.readline().strip()
-                    outfile.write(first_line + "\n")
-        
-        return "Recent logs extracted successfully."
-    except Exception as e:
-        raise RuntimeError(f"Error processing log files: {e}")
-
-def handle_task_A6():
-    """
-    Find all .md files in /data/docs/, extract the first occurrence of an H1 title (# Title),
-    and save them in /data/docs/index.json as { "file.md": "Title", ... }.
-    """
-    docs_dir = os.path.join(os.getcwd(), "data", "docs")
-    output_file = os.path.join(docs_dir, "index.json")
-
-    index = {}
-
-    # Walk through /data/docs/ recursively
-    for root, _, files in os.walk(docs_dir):
-        for file in files:
-            if file.endswith(".md"):
-                file_path = os.path.join(root, file)
-                relative_path = os.path.relpath(file_path, docs_dir)
-
-                # Extract the first H1 title from the file
-                try:
-                    with open(file_path, "r", encoding="utf-8") as f:
-                        for line in f:
-                            match = re.match(r"^# (.+)", line.strip())
-                            if match:
-                                index[relative_path] = match.group(1)
-                                break  # Stop after first H1
-                except Exception as e:
-                    index[relative_path] = f"Error reading file: {str(e)}"
-
-    # Write to index.json
-    with open(output_file, "w", encoding="utf-8") as f:
-        json.dump(index, f, indent=4)
-
-    return {"written_file": output_file, "index": index}
-
-def handle_task_A7():
-    """
-    1. Reads /data/email.txt (the entire email message).
-    2. Sends the email content to GPT-4o-Mini with instructions to extract the sender's email.
-    3. Writes just the sender’s email to /data/email-sender.txt.
-    """
-    input_file = os.path.join(os.getcwd(), "data", "email.txt")
-    output_file = os.path.join(os.getcwd(), "data", "email-sender.txt")
-
-    # 1. Verify the file exists
-    if not os.path.exists(input_file):
-        return {"error": f"File not found: {input_file}"}
-
-    # 2. Read the entire email content
-    with open(input_file, "r", encoding="utf-8") as f:
-        email_content = f.read()
-
-    # 3. Prepare the LLM environment
-    load_dotenv("secret.env")
-    AIPROXY_TOKEN = os.getenv("AIPROXY_TOKEN")
-    #client = OpenAI(api_key=AIPROXY_TOKEN)
-    if not AIPROXY_TOKEN:
-        raise ValueError("⚠ AIPROXY_TOKEN is missing! Check your secret.env file.")
-
-
-    client = openai.OpenAI(api_key=AIPROXY_TOKEN, base_url="https://aiproxy.sanand.workers.dev/openai/v1")
-    print(f"✅ AIPROXY_TOKEN loaded successfully: {AIPROXY_TOKEN[:5]}")  # Masked for security
-    token = os.environ.get("AIPROXY_TOKEN")
-
-    #if not token:
-        #return {"error": "AIPROXY_TOKEN environment variable not set."}
-
-    #openai.api_key = token
-    #openai.api_base = "https://aiproxy.sanand.workers.dev/openai/v1"
-
-    if not token:
-        return {"error": "AIPROXY_TOKEN environment variable not set."}
-
-    openai.api_key = token
-    openai.api_base = "https://aiproxy.sanand.workers.dev/openai/v1"
-
-    # 4. Build a prompt instructing GPT-4o-Mini to extract only the sender’s email
-    #    We'll ask for a JSON response to parse it safely.
-    prompt = (
-        "You are a helpful assistant. I have an email message:\n\n"
-        f"{email_content}\n\n"
-        "Please extract only the sender’s email address from this email. "
-        "Return your answer in a JSON object with a single key 'sender_email'. For example:\n"
-        "{\n  \"sender_email\": \"example@domain.com\"\n}\n\n"
-        "Return only the JSON object."
-    )
-
-    try:
-        # 5. Make the GPT-4o-Mini chat request
-        # response = openai.chat.completions.create(
-        #     model="gpt-4o-mini",
-        #     messages=[
-        #         {"role": "system", "content": "You are a helpful assistant."},
-        #         {"role": "user", "content": prompt},
-        #     ]
-        # )
-        response = openai.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": prompt},
-            ]
-        )
-
-        # 6. Parse the raw response
-        raw_message = response["choices"][0]["message"]["content"].strip()
-        # Remove potential code fences
-        raw_message = re.sub(r"^json\s*", "", raw_message)
-        raw_message = re.sub(r"\s*$", "", raw_message)
-
-        if not raw_message:
-            return {"error": "LLM returned empty response."}
-
-        # Attempt to parse JSON
-        try:
-            data = json.loads(raw_message)
-        except json.JSONDecodeError:
-            return {
-                "error": "LLM response was not valid JSON.",
-                "raw_response": raw_message
-            }
-
-        sender_email = data.get("sender_email", "").strip()
-        if not sender_email:
-            return {
-                "error": "No 'sender_email' found in LLM response.",
-                "raw_response": raw_message
-            }
-
-        # 7. Write the sender’s email to /data/email-sender.txt
-        with open(output_file, "w", encoding="utf-8") as f:
-            f.write(sender_email + "\n")
-
-        return {
-            "status": "success",
-            "sender_email": sender_email,
-            "written_file": output_file
-        }
-
-    except Exception as e:
-        return {"error": str(e)}
-
-def handle_task_A8():
-    """
-    1. Reads /data/credit-card.png
-    2. Extracts a 16-digit number via Tesseract OCR
-    3. Applies Luhn check. If it fails and the first digit is '9',
-       try replacing it with '3' and check again.
-    4. Writes the final 16-digit number to /data/credit-card.txt
-    """
-    input_file = os.path.join(os.getcwd(), "data", "credit_card.png")
-    output_file = os.path.join(os.getcwd(), "data", "credit-card.txt")
-
-    try:
-        # 1. Load the image
-        img = Image.open(input_file)
-
-        # 2. Configure Tesseract for digits only
-        custom_config = r"--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789"
-        extracted_text = pytesseract.image_to_string(img, config=custom_config)
-
-        # 3. Extract lines, look for a line with exactly 16 digits
-        lines = extracted_text.splitlines()
-        recognized_16 = None
-        for line in lines:
-            digits = re.sub(r"\D", "", line)  # keep only digits
-            if len(digits) == 16:
-                recognized_16 = digits
-                break
-
-        if not recognized_16:
-            return {
-                "error": "No line with exactly 16 digits found.",
-                "ocr_output": extracted_text
-            }
-
-        # 4. Check Luhn
-        if passes_luhn(recognized_16):
-            final_number = recognized_16
-        else:
-            # If first digit is '9', try flipping it to '3'
-            if recognized_16[0] == '9':
-                possible_fix = '3' + recognized_16[1:]
-                if passes_luhn(possible_fix):
-                    final_number = possible_fix
-                else:
-                    return {
-                        "error": "Luhn check failed, flipping '9'->'3' also failed.",
-                        "recognized_number": recognized_16
-                    }
             else:
-                return {
-                    "error": "Luhn check failed and no known fix.",
-                    "recognized_number": recognized_16
-                }
+                raise ValueError(f"Unable to parse date: {date_str}")
 
-        # 5. Write final_number to file
-        with open(output_file, "w", encoding="utf-8") as f:
-            f.write(final_number + "\n")
+        #wednesday_count = sum(1 for date in dates if datetime.strptime(date.strip(), "%Y-%m-%d").weekday() == 2)
 
-        return {"written_file": output_file, "card_number": final_number}
+        # Save the result
+        with open(output_path, "w", encoding="utf-8") as file:
+            file.write(str(wednesday_count))
+
+        return f"✅ Found {wednesday_count} Wednesdays. Result saved to {output_path}"
 
     except Exception as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
 
-def handle_task_A9():
-    """
-    Reads /data/comments.txt (one comment per line).
-    Asks GPT-4o-Mini to pick the two lines that are most semantically similar.
-    Writes those two lines (one per line) to /data/comments-similar.txt.
-    """
-    # 1. Prepare file paths
-    input_file = os.path.join(os.getcwd(), "data", "comments.txt")
-    output_file = os.path.join(os.getcwd(), "data", "comments-similar.txt")
+def extract_email():
+    """Reads /data/email.txt, extracts sender's email using LLM, and saves it."""
+    input_path = os.path.join(DATA_DIR, "email.txt")
+    output_path = os.path.join(DATA_DIR, "email-sender.txt")
 
-    # 2. Check if the file exists
-    if not os.path.exists(input_file):
-        return {"error": f"{input_file} does not exist"}
-
-    # 3. Read lines (strip empty ones)
-    with open(input_file, "r", encoding="utf-8") as f:
-        lines = [line.strip() for line in f if line.strip()]
-
-    if len(lines) < 2:
-        return {"error": "Not enough comments to compare."}
-
-    # 4. Set up your GPT-4o-Mini credentials
-    token = os.environ.get("AIPROXY_TOKEN")
-
-    if not token:
-        return {"error": "AIPROXY_TOKEN environment variable not set."}
-
-    openai.api_key = token
-    openai.api_base = "https://aiproxy.sanand.workers.dev/openai/v1"
-
-    # 5. Build a prompt enumerating all lines
-    #    Ask GPT-4o-Mini to return a JSON object with "best_pair": [line1, line2]
-    enumerated_lines = "\n".join(f"{i+1}. {line}" for i, line in enumerate(lines))
-    prompt = (
-        "You are a helpful assistant. I have a list of comments (one per line). "
-        "Please identify the TWO lines that are most semantically similar. "
-        "Return your answer in JSON format as follows:\n\n"
-        "{\n  \"best_pair\": [\"<comment1>\", \"<comment2>\"]\n}\n\n"
-        "Here are the lines:\n\n"
-        f"{enumerated_lines}\n\n"
-        "Respond with only the JSON object."
-    )
+    if not os.path.exists(input_path):
+        raise HTTPException(status_code=404, detail="email.txt not found")
 
     try:
-        # 6. Call GPT-4o-Mini with the prompt
-        response = openai.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": prompt},
-            ],
-        )
+        with open(input_path, "r", encoding="utf-8") as file:
+            email_content = file.read()
 
-        # 7. Parse the raw response to extract JSON
-        raw_message = response["choices"][0]["message"]["content"]
-        # Remove potential markdown fences
-        raw_message = re.sub(r"^json\s*", "", raw_message.strip())
-        raw_message = re.sub(r"\s*$", "", raw_message)
-        if not raw_message.strip():
-            return {"error": f"LLM returned empty or invalid response: {response}"}
+        # Use GPT-4o-mini to extract the sender's email
+        response = client.chat.completions.create(model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "You are an email processing assistant. Extract only the sender's email address."},
+            {"role": "user", "content": email_content}
+        ])
 
-        data = json.loads(raw_message)
-        best_pair = data.get("best_pair", [])
-        if len(best_pair) != 2:
-            return {"error": f"Could not find exactly 2 lines. Received: {best_pair}"}
+        sender_email = response.choices[0].message.content.strip()
 
-        # 8. Write the best pair to /data/comments-similar.txt
-        with open(output_file, "w", encoding="utf-8") as f:
-            f.write(best_pair[0] + "\n")
-            f.write(best_pair[1] + "\n")
+        # Save the extracted email
+        with open(output_path, "w", encoding="utf-8") as file:
+            file.write(sender_email)
 
-        return {
-            "status": "success",
-            "best_pair": best_pair,
-            "written_file": output_file
-        }
+        return f"✅ Extracted email: {sender_email}. Saved to {output_path}"
 
     except Exception as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
 
-def handle_task_A10():
-    local_data_dir = os.path.join(os.getcwd(), "data")
-    db_path = os.path.join(local_data_dir, "ticket-sales.db")
-    output_file = os.path.join(local_data_dir, "ticket-sales-gold.txt")
+def extract_credit_card():
+    """Reads /data/credit-card.png, extracts credit card number using OpenAI Vision API, and saves it."""
+    input_path = os.path.join(DATA_DIR, "credit_card.png")
+    output_path = os.path.join(DATA_DIR, "credit-card.txt")
+
+    if not os.path.exists(input_path):
+        raise HTTPException(status_code=404, detail="credit-card.png not found")
+
+    try:
+        # Convert the image to a base64 string
+        with open(input_path, "rb") as image_file:
+            base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+
+        # Use OpenAI Vision API to analyze the image
+        response = client.chat.completions.create(model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "You are an OCR assistant. Extract only the credit card number from the image."},
+            {"role": "user", "content": [
+                {"type": "text", "text": "Extract the credit card number from this image:"},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}}
+            ]}
+        ])
+
+        card_number = response.choices[0].message.content.strip().replace(" ", "")
+
+        # Save the extracted number
+        with open(output_path, "w", encoding="utf-8") as file:
+            file.write(card_number)
+
+        return f"✅ Extracted credit card number: {card_number}. Saved to {output_path}"
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+def find_similar_comments():
+    """Reads /data/comments.txt, finds the most similar pair using embeddings, and saves the result."""
+    input_path = os.path.join(DATA_DIR, "comments.txt")
+    output_path = os.path.join(DATA_DIR, "comments-similar.txt")
+
+    if not os.path.exists(input_path):
+        raise HTTPException(status_code=404, detail="comments.txt not found")
+
+    try:
+        # Read comments from file
+        with open(input_path, "r", encoding="utf-8") as file:
+            comments = [line.strip() for line in file.readlines() if line.strip()]
+
+        if len(comments) < 2:
+            raise HTTPException(status_code=400, detail="Not enough comments to compare.")
+
+        # Get embeddings for all comments
+        response = client.embeddings.create(model="text-embedding-3-small",
+        input=comments)
+
+        embeddings = np.array([item.embedding for item in response.data])
+
+        # Compute cosine similarity
+        similarity_matrix = np.dot(embeddings, embeddings.T)
+        np.fill_diagonal(similarity_matrix, -1)  # Ignore self-similarity
+
+        # Find the most similar pair
+        max_index = np.unravel_index(np.argmax(similarity_matrix), similarity_matrix.shape)
+        comment1, comment2 = comments[max_index[0]], comments[max_index[1]]
+
+        # Save the most similar comments
+        with open(output_path, "w", encoding="utf-8") as file:
+            file.write(f"{comment1}\n{comment2}")
+
+        return f"✅ Most similar comments saved to {output_path}"
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+def calculate_gold_ticket_sales():
+    """Reads /data/ticket-sales.db, calculates total sales for 'Gold' tickets, and saves the result."""
+    db_path = os.path.join(DATA_DIR, "ticket-sales.db")
+    output_path = os.path.join(DATA_DIR, "ticket-sales-gold.txt")
 
     if not os.path.exists(db_path):
-        return {"error": f"Database file not found at {db_path}"}
+        raise HTTPException(status_code=404, detail="ticket-sales.db not found")
 
     try:
+        # Connect to SQLite database
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
-        query = "SELECT SUM(units * price) FROM tickets WHERE type = 'Gold';"
-        cursor.execute(query)
-        total_sales = cursor.fetchone()[0]
-        if total_sales is None:
-            total_sales = 0.0
 
-        with open(output_file, "w", encoding="utf-8") as f:
-            f.write(str(total_sales) + "\n")
+        # Query total sales for "Gold" ticket type
+        cursor.execute("SELECT SUM(units * price) FROM tickets WHERE type = 'Gold'")
+        total_sales = cursor.fetchone()[0] or 0  # Handle NULL case
 
         conn.close()
-        return {
-            "status": "success",
-            "total_sales": total_sales,
-            "written_file": output_file
-        }
+
+        # Save the result
+        with open(output_path, "w", encoding="utf-8") as file:
+            file.write(str(total_sales))
+
+        return f"✅ Total sales for 'Gold' tickets: {total_sales}. Saved to {output_path}"
 
     except Exception as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
 
-import openai
+def extract_recent_log_lines():
+    """Extracts the first line of the 10 most recent .log files in /data/logs/ and saves to /data/logs-recent.txt"""
+    logs_path = os.path.join(DATA_DIR, "logs", "*.log")
+    output_path = os.path.join(DATA_DIR, "logs-recent.txt")
 
-def parse_task_with_llm(task: str) -> dict:
-    """
-    Uses GPT-4o-Mini via the AI Proxy to parse the plain-English task and extract a structured task code.
-    Expected output JSON format: {"task_code": "A3"}, for example.
-    """
-    token = os.environ.get("AIPROXY_TOKEN")
-    if not token:
-        raise Exception("AIPROXY_TOKEN environment variable not set")
-    
-    # Initialize the OpenAI client
-    client = openai.OpenAI(
-        api_key=token,
-        base_url="https://aiproxy.sanand.workers.dev/openai/v1"
-    )
-    
-    # Construct a prompt with explicit mappings between task descriptions and task codes.
-    prompt = (
-        "You are a task parser for DataWorks Solutions. Below are the explicit mappings of task descriptions to task codes:\n\n"
-        "A1: 'Install uv (if required) and run datagen.py with ${user.email} as the only argument'\n"
-        "A2: 'Format the contents of /data/format.md using prettier@3.4.2, updating the file in-place'\n"
-        "A3: 'The file /data/dates.txt contains a list of dates, one per line. Count the number of Wednesdays and write just the number to /data/dates-wednesdays.txt'\n"
-        "A4: 'Sort the array of contacts in /data/contacts.json by last_name, then first_name, and write the result to /data/contacts-sorted.json'\n"
-        "A5: 'Write the first line of the 10 most recent .log files in /data/logs/ to /data/logs-recent.txt, most recent first'\n"
-        "A6: 'Find all Markdown (.md) files in /data/docs/, extract the first occurrence of each H1, and create an index file /data/docs/index.json mapping filenames to titles'\n"
-        "A7: '/data/email.txt contains an email message. Extract the sender’s email address using an LLM and write it to /data/email-sender.txt'\n"
-        "A8: '/data/credit-card.png contains a credit card number. Use an LLM to extract the card number and write it without spaces to /data/credit-card.txt'\n"
-        "A9: '/data/comments.txt contains a list of comments, one per line. Using embeddings, find the most similar pair of comments and write them to /data/comments-similar.txt, one per line'\n"
-        "A10: 'The SQLite database file /data/ticket-sales.db has a table tickets with columns type, units, and price. Calculate the total sales for the \"Gold\" ticket type and write the number to /data/ticket-sales-gold.txt'\n\n"
-        "Given the following instruction, determine which task code applies. "
-        "Return a JSON object with a single key 'task_code' whose value is one of A1, A2, A3, A4, A5, A6, A7, A8, A9, or A10. "
-        "If the instruction does not match any known task, return 'UNKNOWN'.\n\n"
-        f"Instruction: \"{task}\"\n\n"
-        "Return only the JSON object."
-    )
-    
+    # Find all .log files
+    log_files = glob.glob(logs_path)
+
+    if not log_files:
+        raise HTTPException(status_code=404, detail="No log files found in /data/logs/")
+
     try:
-        # Call the OpenAI API
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are a task parser for DataWorks Solutions."},
-                {"role": "user", "content": prompt}
-            ]
-        )
-        
-        # Extract the content
-        raw_message = response.choices[0].message.content.strip()
-        
-        if not raw_message:
-            raise Exception("LLM returned an empty response: " + str(response))
-        
-        # Parse the JSON response
-        parsed = json.loads(raw_message)
-        return parsed
-    except Exception as e:
-        raise Exception(f"Error calling LLM: {str(e)}")
+        # Sort log files by modification time (newest first)
+        log_files.sort(key=os.path.getmtime, reverse=True)
 
-def passes_luhn(number_str: str) -> bool:
-    """
-    Returns True if 'number_str' (containing only digits) satisfies the Luhn check.
-    """
-    if not number_str.isdigit():
-        return False
+        # Read first line from up to 10 most recent logs
+        recent_logs = []
+        for log_file in log_files[:10]:
+            with open(log_file, "r", encoding="utf-8") as file:
+                first_line = file.readline().strip()
+                recent_logs.append(first_line)
+
+        # Save extracted lines to /data/logs-recent.txt
+        with open(output_path, "w", encoding="utf-8") as file:
+            file.write("\n".join(recent_logs))
+
+        return f"✅ Extracted first lines from {len(recent_logs)} log files. Saved to {output_path}"
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+def extract_markdown_headers():
+    """Finds all Markdown (.md) files in /data/docs/, extracts H1 headers, and saves to /data/docs/index.json"""
+    docs_path = os.path.join(DATA_DIR, "docs")
+    output_path = os.path.join(docs_path, "index.json")
+
+    if not os.path.exists(docs_path):
+        raise HTTPException(status_code=404, detail="docs directory not found")
+
+    headers_dict = {}
+
+    try:
+        # Recursively find all Markdown files in subdirectories
+        md_files = []
+        for subdir, dirs, files in os.walk(docs_path):
+            for file in files:
+                if file.endswith(".md"):
+                    md_files.append(os.path.join(subdir, file))
+
+        if not md_files:
+            raise HTTPException(status_code=404, detail="No Markdown files found in /data/docs/")
+
+        # Extract the first H1 header from each Markdown file
+        for md_file in md_files:
+            with open(md_file, "r", encoding="utf-8") as file:
+                for line in file:
+                    match = re.match(r"^# (.+)", line.strip())  # Find the first H1 header
+                    if match:
+                        # Remove /data/docs/ prefix and add to the dictionary
+                        relative_file_path = os.path.relpath(md_file, docs_path)
+                        headers_dict[relative_file_path] = match.group(1)
+                        break  # Stop after the first H1
+
+        # Save extracted headers to index.json
+        with open(output_path, "w", encoding="utf-8") as file:
+            json.dump(headers_dict, file, indent=4)
+
+        return f"✅ Extracted H1 headers from {len(headers_dict)} Markdown files. Saved to {output_path}"
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+@app.get("/")
+async def root():
+    return JSONResponse(content={"message": "Welcome to the API root"})
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return FileResponse("path/to/your/favicon.ico")
+
+@app.post("/run")
+async def run_task(task: str = Query(..., description="Plain-English task description")):
+    """Executes a task based on natural language input."""
+    if "run datagen" in task.lower():
+        email = task.split()[-1]  # Assume the email is the last word in the task description
+        return {"task": task, "output": run_datagen(email)}
+    elif "format" in task.lower() and "prettier" in task.lower():
+        return format_markdown()                                       
+    #elif "format markdown" in task.lower():
+        #return {"task": task, "output": format_markdown()}
+    elif "sort contacts" in task.lower():
+        return {"task": task, "output": sort_contacts()}
+    elif "count wednesdays" in task.lower():
+        return {"task": task, "output": count_wednesdays()}
+    elif "extract email" in task.lower():
+        return {"task": task, "output": extract_email()}
+    elif "extract credit card" in task.lower():
+        return {"task": task, "output": extract_credit_card()}
+    elif "find similar comments" in task.lower():
+        return {"task": task, "output": find_similar_comments()}
+    elif "calculate gold ticket sales" in task.lower():
+        return {"task": task, "output": calculate_gold_ticket_sales()}
+    elif "extract recent logs" in task.lower():
+        return {"task": task, "output": extract_recent_log_lines()}
+    elif "extract markdown headers" in task.lower():  # ✅ New Task A6 added here
+        return {"task": task, "output": extract_markdown_headers()}
+
+    # If task is not predefined, call the LLM
+    try:
+        response = client.chat.completions.create(model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "You are an automation assistant."},
+            {"role": "user", "content": task}
+        ])
+        task_output = response.choices[0].message.content
+        return {"task": task, "output": task_output}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
     
-    digits = [int(d) for d in number_str]
-    # Double every second digit from the right
-    for i in range(len(digits) - 2, -1, -2):
-        doubled = digits[i] * 2
-        # If doubling is >= 10, subtract 9
-        if doubled > 9:
-            doubled -= 9
-        digits[i] = doubled
-    
-    return sum(digits) % 10 == 0
+
