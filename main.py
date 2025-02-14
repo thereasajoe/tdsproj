@@ -36,19 +36,20 @@ app = FastAPI()
 # openai.api_base = "https://aiproxy.sanand.workers.dev/openai/v1"
 
 # Define base data directory
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(BASE_DIR, "data/")
+
+#BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+#BASE_DIR = os.getcwd()
+#BASE_DIR = os.path.join(os.getcwd(), "data")
+#DATA_DIR = os.path.join(BASE_DIR, "data")
+
+#DATA_DIR = os.path.join(os.getcwd(), "data")
+BASE_DIR = os.path.abspath(os.getcwd())  # This ensures it points to the repository root
+DATA_DIR = os.path.join(BASE_DIR, "data")
+
+os.makedirs(DATA_DIR, exist_ok=True)
 
 class TaskRequest(BaseModel):
     task: str
-
-# Define base data directory
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(BASE_DIR, "data/")
-
-class TaskRequest(BaseModel):
-    task: str
-
 
 def run_datagen(email):
     """Run datagen.py with the provided email, ensuring output is stored in /data/."""
@@ -57,7 +58,7 @@ def run_datagen(email):
 
     try:
         # Ensure /data directory exists
-        os.makedirs(DATA_DIR, exist_ok=True)
+        #os.makedirs(DATA_DIR, exist_ok=True)
 
         # Download datagen.py to /data/
         subprocess.run(["curl", "-sSL", "https://raw.githubusercontent.com/sanand0/tools-in-data-science-public/tds-2025-01/project-1/datagen.py", "-o", input_path], check=True)
