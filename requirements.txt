@@ -9,4 +9,8 @@ openai
 pydantic
 python-dotenv 
 numpy
-
+faker
+httpx
+numpy
+pillow
+python-dateutil
